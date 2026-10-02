@@ -32,58 +32,74 @@ if audio and gemini_key and tavily_key:
     ai_client = genai.Client(api_key=gemini_key)
     tavily_client = TavilyClient(api_key=tavily_key)
 
-    # تشغيل الصوت المباشر في الصفحة مع تحديد الترميز الصحيح
-    st.audio(audio['bytes'], format='audio/wav')
+    # تشغيل الصوت المباشر في الصفحة
+    st.audio(audio['bytes'])
 
     try:
         with st.spinner("⏳ جاري تفريغ الصوت واستخراج النص عبر Gemini..."):
-            # إرسال بيانات الصوت مباشرة إلى النموذج في الذاكرة لتفادي مشاكل الحفظ الصامت
+            # إرسال بيانات الصوت بحجمها الخام التلقائي مع دعم التشفير المتوافق مع الجوال
             stt_response = ai_client.models.generate_content(
-                model='gemini-1.5-flash',
+                model='gemini-2.0-flash',
                 contents=[
                     types.Part.from_bytes(
                         data=audio['bytes'],
-                        mime_type='audio/wav',
+                        mime_type='audio/webm', # الصيغة القياسية لتسجيلات المتصفح والجوال
                     ),
-                    "فرّغ هذا المقطع الصوتي بدقة إلى نص مكتوب باللغة العربية فقط دون أي تفسير أو زيادة."
+                    "فرّغ هذا المقطع الصوتي بدقة إلى نص مكتوب باللغة العربية فقط. إذا لم تجد كلاماً واضحاً اكتب 'صوت غير واضح'."
                 ]
             )
             
             text = stt_response.text.strip()
-            st.info(f"🗣️ **النص المسموع:** {text}")
-
-        with st.spinner("🔍 جاري البحث والتحقق من صحة الكلام عبر Tavily..."):
-            # البحث عن الأدلة عبر الإنترنت
-            search_results = tavily_client.search(query=text, search_depth="basic", max_results=3)
-            context = "\n".join([f"- {r['content']}" for r in search_results.get('results', [])])
-
-            prompt = f"""
-            أنت مدقق حقائق صارم.
-            الكلام المستخرج من الصوت: "{text}"
-            نتائج البحث المباشر:
-            {context}
-
-            حدد حتماً واحدة من النتائج التالية فقط دون أي إضافات أو مقدمات أو نقاط:
-            1. معلومة صحيحة
-            2. معلومة كاذبة
-            3. معلومة غير موثقة
-            """
-
-            # تقييم النص باستخدام Gemini
-            verdict_response = ai_client.models.generate_content(
-                model='gemini-1.5-flash',
-                contents=prompt
-            )
             
-            verdict = verdict_response.text.strip()
+            if "غير واضح" in text or not text:
+                st.warning("⚠️ لم يتم التقاط صوت واضح، يرجى إعادة المحاولة والتحدث بقرب من المايكروفون.")
+            else:
+                st.info(f"🗣️ **النص المسموع:** {text}")
 
-        st.divider()
-        if "صحيحة" in verdict:
-            st.success(f"✅ **النتيجة: {verdict}**")
-        elif "كاذبة" in verdict:
-            st.error(f"❌ **النتيجة: {verdict}**")
-        else:
-            st.warning(f"⚠️ **النتيجة: {verdict}**")
+                with st.spinner("🔍 جاري البحث والتحقق من صحة الكلام عبر Tavily..."):
+                    # البحث عن الأدلة عبر الإنترنت
+                    search_results = tavily_client.search(query=text, search_depth="basic", max_results=3)
+                    context = "\n".join([f"- {r['content']}" for r in search_results.get('results', [])])
+
+                    prompt = f"""
+                    أنت مدقق حقائق صارم.
+                    الكلام المستخرج من الصوت: "{text}"
+                    نتائج البحث المباشر:
+                    {context}
+
+                    حدد حتماً واحدة من النتائج التالية فقط دون أي إضافات أو مقدمات أو نقاط:
+                    1. معلومة صحيحة
+                    2. معلومة كاذبة
+                    3. معلومة غير موثقة
+                    """
+
+                    # تقييم النص باستخدام Gemini
+                    verdict_response = ai_client.models.generate_content(
+                        model='gemini-2.0-flash',
+                        contents=prompt
+                    )
+                    
+                    verdict = verdict_response.text.strip()
+
+                st.divider()
+                if "صحيحة" in verdict:
+                    st.success(f"✅ **النتيجة: {verdict}**")
+                elif "كاذبة" in verdict:
+                    st.error(f"❌ **النتيجة: {verdict}**")
+                else:
+                    st.warning(f"⚠️ **النتيجة: {verdict}**")
 
     except Exception as e:
-        st.error(f"حدث خطأ أثناء المعالجة: {str(e)}")
+        # محاولة احتياطية بتشغيل الصوت بتنسيق wav إذا كان المتصفح يستخدمه
+        try:
+            stt_response = ai_client.models.generate_content(
+                model='gemini-2.0-flash',
+                contents=[
+                    types.Part.from_bytes(data=audio['bytes'], mime_type='audio/wav'),
+                    "فرّغ هذا المقطع الصوتي بدقة إلى نص مكتوب باللغة العربية فقط."
+                ]
+            )
+            text = stt_response.text.strip()
+            st.info(f"🗣️ **النص المسموع:** {text}")
+        except Exception as inner_e:
+            st.error(f"حدث خطأ أثناء المعالجة: {str(e)}")
