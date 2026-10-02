@@ -1,14 +1,13 @@
 import streamlit as st
 from streamlit_mic_recorder import mic_recorder
 from google import genai
+from google.genai import types
 from tavily import TavilyClient
-import tempfile
-import os
 
 st.set_page_config(page_title="مدقق الكلام الذكي - Gemini", page_icon="🎙️", layout="centered")
 
 st.title("🎙️ مدقق الكلام الفوري (Gemini + Tavily)")
-st.write("تحدث بالمعلومة، وسيقوم الذكاء الاصطناعي بالتحقق منها مجاناً عبر Gemini و Tavily.")
+st.write("تحدث بالمعلومة، وسيقوم الذكاء الاصطناعي بالتحقق منها مجاناً.")
 
 # قراءة المفاتيح التلقائية من Secrets
 gemini_key = st.secrets.get("GEMINI_API_KEY", "")
@@ -16,7 +15,7 @@ tavily_key = st.secrets.get("TAVILY_API_KEY", "")
 
 if not gemini_key or not tavily_key:
     with st.expander("🔑 أدخل المفاتيح يدوياً (إذا لم تضفها في Secrets)"):
-        gemini_key = st.text_input("Gemini API Key (من Google AI Studio)", value=gemini_key, type="password")
+        gemini_key = st.text_input("Gemini API Key", value=gemini_key, type="password")
         tavily_key = st.text_input("Tavily API Key", value=tavily_key, type="password")
 
 st.divider()
@@ -33,32 +32,25 @@ if audio and gemini_key and tavily_key:
     ai_client = genai.Client(api_key=gemini_key)
     tavily_client = TavilyClient(api_key=tavily_key)
 
+    # تشغيل الصوت المباشر في الصفحة مع تحديد الترميز الصحيح
     st.audio(audio['bytes'], format='audio/wav')
-
-    # حفظ الصوت في ملف مؤقت
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
-        temp_audio.write(audio['bytes'])
-        temp_path = temp_audio.name
 
     try:
         with st.spinner("⏳ جاري تفريغ الصوت واستخراج النص عبر Gemini..."):
-            # رفع الملف إلى معالج Gemini
-            uploaded_file = ai_client.files.upload(file=temp_path)
-            
-            # استخراج النص المسموع من التسجيل
+            # إرسال بيانات الصوت مباشرة إلى النموذج في الذاكرة لتفادي مشاكل الحفظ الصامت
             stt_response = ai_client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-1.5-flash',
                 contents=[
-                    uploaded_file,
+                    types.Part.from_bytes(
+                        data=audio['bytes'],
+                        mime_type='audio/wav',
+                    ),
                     "فرّغ هذا المقطع الصوتي بدقة إلى نص مكتوب باللغة العربية فقط دون أي تفسير أو زيادة."
                 ]
             )
             
             text = stt_response.text.strip()
             st.info(f"🗣️ **النص المسموع:** {text}")
-
-            # حذف الملف بعد التفريغ
-            ai_client.files.delete(name=uploaded_file.name)
 
         with st.spinner("🔍 جاري البحث والتحقق من صحة الكلام عبر Tavily..."):
             # البحث عن الأدلة عبر الإنترنت
@@ -79,7 +71,7 @@ if audio and gemini_key and tavily_key:
 
             # تقييم النص باستخدام Gemini
             verdict_response = ai_client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-1.5-flash',
                 contents=prompt
             )
             
@@ -95,7 +87,3 @@ if audio and gemini_key and tavily_key:
 
     except Exception as e:
         st.error(f"حدث خطأ أثناء المعالجة: {str(e)}")
-    
-    finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
